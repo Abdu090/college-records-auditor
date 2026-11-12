@@ -311,6 +311,7 @@ ar:{
   aiDocNote:"ملف ‎.doc قديم: استخراج نص تقريبي", aiNoText:"لم نستخرج نصًا مقروءًا (قد يكون مسحًا ضوئيًا).",
   aiProg:(a,b)=>`تم ${a} من ${b}`,
   exportH:"التصدير والإرسال", exportD:"حمّل التقرير كملف Excel (ضمن الفلتر الحالي)، أو أرسل ملخصه إلى لوحة مكتب الجودة.",
+  exportDSolo:"حمّل التقرير كملف Excel (ضمن الفلتر الحالي).",
   exportBtn:"تحميل Excel", sendBtn:"إرسال إلى مكتب الجودة",
   exportOk:"تم تجهيز الملف.", exportDeclined:"أُلغي التنزيل.", exportFail:"تعذّر التنزيل: ",
   sendOk:"تم الإرسال. التقرير ظاهر الآن في لوحة مكتب الجودة.", sendFail:"تعذّر الإرسال: ",
@@ -327,6 +328,7 @@ ar:{
   offRank:"ترتيب الكليات", offHeat:"البنود حسب الكلية", offHeatD:"نسبة المقررات التي يتوفر فيها كل بند.", offDetail:"تفاصيل الكلية",
   units:"مقرر", avg:"متوسط", demoTag:"بيانات تجريبية",
   foot:"الفحص السريع يعتمد على أسماء الملفات وأحجامها: الملف الذي يطابق حجمه قالبًا فارغًا معروفًا يُعدّ «فارغًا». التدقيق بالذكاء الاصطناعي اختياري ويقرأ محتوى الملف فعليًا (Word وPDF، وملفات ‎.doc القديمة بشكل تقريبي).",
+  footSolo:"الفحص هنا يعتمد فقط على أسماء الملفات وأحجامها: الملف الذي يطابق حجمه قالبًا فارغًا معروفًا يُعدّ «فارغًا». (التدقيق بالذكاء الاصطناعي ولوحة مكتب الجودة المركزية متاحان فقط في نسخة Claude من هذه الأداة.)",
   xlSummary:"الملخص", xlMatrix:"المصفوفة", xlMissing:"البنود الناقصة والفارغة"
 },
 en:{
@@ -368,6 +370,7 @@ en:{
   aiDocNote:"Legacy .doc: approximate text extraction", aiNoText:"No readable text found (may be a scan).",
   aiProg:(a,b)=>`${a} of ${b} done`,
   exportH:"Export and submit", exportD:"Download the report as Excel (current filter), or send its summary to the quality office dashboard.",
+  exportDSolo:"Download the report as Excel (current filter).",
   exportBtn:"Download Excel", sendBtn:"Send to quality office",
   exportOk:"File ready.", exportDeclined:"Download cancelled.", exportFail:"Download failed: ",
   sendOk:"Sent. The report now shows on the quality office dashboard.", sendFail:"Could not send: ",
@@ -384,6 +387,7 @@ en:{
   offRank:"Faculty ranking", offHeat:"Items by faculty", offHeatD:"Share of courses that have each item.", offDetail:"Faculty details",
   units:"courses", avg:"avg", demoTag:"sample data",
   foot:"The quick scan uses file names and sizes: a file whose size equals a known blank template counts as “empty”. The optional AI check reads the file content (Word and PDF; legacy .doc approximately).",
+  footSolo:"This scan uses only file names and sizes: a file whose size equals a known blank template counts as “empty”. (The AI check and the central quality-office dashboard are only available in the Claude version of this tool.)",
   xlSummary:"Summary", xlMatrix:"Matrix", xlMissing:"Missing and empty"
 }};
 
@@ -578,7 +582,9 @@ function renderChrome(){
   $("tab-scan").textContent = t("tabScan");
   $("tab-history").textContent = t("tabHistory");
   $("tab-office").textContent = t("tabOffice");
-  $("t-foot").textContent = t("foot");
+  $("tab-office").hidden = !caps.db;
+  if(!caps.db && activeTab==="office") showTab("scan");
+  $("t-foot").textContent = (caps.db||caps.sample) ? t("foot") : t("footSolo");
   document.title = lang==="ar" ? "مدقق سجلات الكليات" : "Faculty Records Auditor";
 }
 
@@ -728,9 +734,10 @@ function renderBody(){
   if(!units.length) h += `<tr><td colspan="4"><div class="empty-state">${esc(t("shown")(0, report.units.length))}</div></td></tr>`;
   h += `</tbody></table></div></div></section>`;
 
-  h += `<section class="block"><div class="block-h"><h2>${esc(t("exportH"))}</h2></div><p class="desc">${esc(t("exportD"))}</p><div class="card export-bar">
+  const sendAvail = !!caps.db;
+  h += `<section class="block"><div class="block-h"><h2>${esc(t("exportH"))}</h2></div><p class="desc">${esc(sendAvail?t("exportD"):t("exportDSolo"))}</p><div class="card export-bar">
     <button class="btn-2 accent" id="xl" type="button">${esc(t("exportBtn"))}</button>
-    <button class="btn" id="send" type="button">${esc(t("sendBtn"))}</button></div><div id="export-status" aria-live="polite"></div></section>`;
+    ${sendAvail?`<button class="btn" id="send" type="button">${esc(t("sendBtn"))}</button>`:""}</div><div id="export-status" aria-live="polite"></div></section>`;
 
   $("res-body").innerHTML = h;
   $("toggle-all").addEventListener("click", ()=>{ allOpen=!allOpen; if(!allOpen) openRows.clear(); renderBody(); });
@@ -742,7 +749,7 @@ function renderBody(){
   document.querySelectorAll(".ai-btn[data-k]").forEach(b=> b.addEventListener("click", e=>{ e.stopPropagation(); aiOne(b.dataset.k); }));
   document.querySelectorAll(".ai-all").forEach(b=> b.addEventListener("click", e=>{ e.stopPropagation(); aiAll(b.dataset.dir); }));
   $("xl").addEventListener("click", exportExcel);
-  $("send").addEventListener("click", sendOffice);
+  const sendBtn = $("send"); if(sendBtn) sendBtn.addEventListener("click", sendOffice);
 }
 
 function fileKey(u,i,f){ return u.dir+"::"+i+"::"+(f.sharedFrom||"")+"::"+f.name; }
@@ -757,7 +764,7 @@ function aiOutHtml(k){
 function detailHtml(u){
   const aiTargets = IDS.reduce((n,i)=>n+u.items[i].files.filter(canAi).length,0);
   let h = `<div class="detail-tools"><bdi class="muted">${esc(u.path)}</bdi>`;
-  if(aiTargets) h += `<button class="btn-2 ai-all" type="button" data-dir="${esc(u.dir)}" ${caps.sample?"":"disabled"} title="${esc(caps.sample?"":t("aiOff"))}">${esc(t("aiAll"))} (${aiTargets})</button><span class="muted" id="prog-${esc(slug(u.dir))}"></span>`;
+  if(aiTargets && caps.sample) h += `<button class="btn-2 ai-all" type="button" data-dir="${esc(u.dir)}">${esc(t("aiAll"))} (${aiTargets})</button><span class="muted" id="prog-${esc(slug(u.dir))}"></span>`;
   else if(report.demo) h += `<span class="muted">${esc(t("aiDemo"))}</span>`;
   h += `</div><div class="tbl-wrap"><table class="chk"><tbody>`;
   IDS.forEach(i=>{
@@ -766,7 +773,7 @@ function detailHtml(u){
     it.files.forEach(f=>{
       const k = fileKey(u,i,f);
       h += `<div class="file"><bdi class="fn">${esc(f.name)}</bdi><bdi class="muted">${esc(fmtBytes(f.size))}</bdi>${f.empty?`<span class="tag">${esc(t("lgEmpty"))}</span>`:""}${f.sharedFrom?`<span class="tag" title="${esc(t("sharedNote"))}">${esc(f.sharedFrom.split("/").pop())}</span>`:""}`;
-      if(canAi(f)) h += `<button class="ai-btn" type="button" data-k="${esc(k)}" ${caps.sample&&!(aiResults[k]&&aiResults[k].state==="run")?"":"disabled"} title="${esc(caps.sample?"":t("aiOff"))}">${esc(t("aiOne"))}</button>`;
+      if(canAi(f) && caps.sample) h += `<button class="ai-btn" type="button" data-k="${esc(k)}" ${(aiResults[k]&&aiResults[k].state==="run")?"disabled":""}>${esc(t("aiOne"))}</button>`;
       h += `</div>${aiOutHtml(k)}`;
     });
     if(it.status!=="available"){
@@ -1008,6 +1015,7 @@ renderScan();
   const get = async n=>{ try{ return await window.claude.use(n); }catch(e){ return null; } };
   const [db, sample, downloads] = await Promise.all([get("db"), get("sample"), get("downloads")]);
   caps = { db, sample, downloads };
+  renderChrome();
   if(report) renderBody();
   if(activeTab!=="scan") showTab(activeTab);
 })();
