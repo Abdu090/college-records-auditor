@@ -7,19 +7,18 @@ const BLOB_PATH = "submissions.json";
 async function readAll() {
   try {
     const info = await head(BLOB_PATH);
-    // The public blob URL sits behind a CDN that pins whatever it first
-    // served for a given URL, ignoring both query strings and our
-    // cacheControlMaxAge. Reading with the read/write token instead makes
-    // this an authenticated request, which shared caches aren't allowed to
-    // store, so it always reaches the actual current content.
+    console.log("[readAll] head()", JSON.stringify(info));
     const r = await fetch(info.url, {
       cache: "no-store",
       headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` }
     });
+    const text = await r.text();
+    console.log("[readAll] fetch status", r.status, "body", text);
     if (!r.ok) return [];
-    const rows = await r.json();
+    const rows = JSON.parse(text);
     return Array.isArray(rows) ? rows : [];
-  } catch {
+  } catch (err) {
+    console.log("[readAll] error", String((err && err.stack) || err));
     return [];
   }
 }
@@ -53,10 +52,13 @@ module.exports = async function handler(req, res) {
     const idx = rows.findIndex(r => r.id === id);
     const rec = Object.assign({ id }, data);
     if (idx >= 0) rows[idx] = rec; else rows.push(rec);
+    console.log("[POST] writing rows", JSON.stringify(rows));
     try {
-      await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
+      const putResult = await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
+      console.log("[POST] put() result", JSON.stringify(putResult));
       res.status(200).json({ ok: true });
     } catch (err) {
+      console.log("[POST] put() error", String((err && err.stack) || err));
       res.status(500).json({ error: String((err && err.message) || err) });
     }
     return;
