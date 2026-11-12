@@ -70,11 +70,16 @@ module.exports = async function handler(req, res) {
       res.status(400).json({ error: "Missing id" });
       return;
     }
-    const rows = (await readAll()).filter(r => r.id !== id);
+    const before = await readAll();
+    console.log("[DELETE] id to remove:", JSON.stringify(id), "before:", JSON.stringify(before));
+    const rows = before.filter(r => r.id !== id);
+    console.log("[DELETE] after filter:", JSON.stringify(rows));
     try {
-      await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
+      const putResult = await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
+      console.log("[DELETE] put() result:", JSON.stringify(putResult));
       res.status(200).json({ ok: true });
     } catch (err) {
+      console.log("[DELETE] put() error:", String((err && err.stack) || err));
       res.status(500).json({ error: String((err && err.message) || err) });
     }
     return;
