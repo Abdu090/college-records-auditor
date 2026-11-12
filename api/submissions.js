@@ -7,10 +7,11 @@ const BLOB_PATH = "submissions.json";
 async function readAll() {
   try {
     const info = await head(BLOB_PATH);
-    // Vercel Blob's CDN caches the public URL by pathname and ignores query
-    // strings, so a classic cache-busting query param does nothing here.
-    // put() below sets cacheControlMaxAge:0 so the CDN doesn't cache writes.
-    const r = await fetch(info.url, { cache: "no-store" });
+    // Plain info.url sits behind a long-lived CDN cache entry that a query
+    // string can't bust (the CDN keys on pathname only). The ?download=1
+    // variant is a distinct cache key and, combined with cacheControlMaxAge:0
+    // on put() below, reads the current content instead of a stale copy.
+    const r = await fetch(info.downloadUrl, { cache: "no-store" });
     if (!r.ok) return [];
     const rows = await r.json();
     return Array.isArray(rows) ? rows : [];
@@ -29,17 +30,6 @@ const PUT_OPTS = {
 
 module.exports = async function handler(req, res) {
   if (req.method === "GET") {
-    if (req.query && req.query.debug) {
-      try {
-        const info = await head(BLOB_PATH);
-        const r = await fetch(info.url, { cache: "no-store" });
-        const text = await r.text();
-        res.status(200).json({ info, fetchStatus: r.status, fetchOk: r.ok, text });
-      } catch (err) {
-        res.status(200).json({ debugError: String((err && err.stack) || err) });
-      }
-      return;
-    }
     const rows = await readAll();
     res.status(200).json(rows);
     return;
