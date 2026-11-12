@@ -7,11 +7,15 @@ const BLOB_PATH = "submissions.json";
 async function readAll() {
   try {
     const info = await head(BLOB_PATH);
-    // Plain info.url sits behind a long-lived CDN cache entry that a query
-    // string can't bust (the CDN keys on pathname only). The ?download=1
-    // variant is a distinct cache key and, combined with cacheControlMaxAge:0
-    // on put() below, reads the current content instead of a stale copy.
-    const r = await fetch(info.downloadUrl, { cache: "no-store" });
+    // The public blob URL sits behind a CDN that pins whatever it first
+    // served for a given URL, ignoring both query strings and our
+    // cacheControlMaxAge. Reading with the read/write token instead makes
+    // this an authenticated request, which shared caches aren't allowed to
+    // store, so it always reaches the actual current content.
+    const r = await fetch(info.url, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` }
+    });
     if (!r.ok) return [];
     const rows = await r.json();
     return Array.isArray(rows) ? rows : [];
