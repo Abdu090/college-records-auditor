@@ -21,6 +21,18 @@ async function readAll() {
 
 module.exports = async function handler(req, res) {
   if (req.method === "GET") {
+    if (req.query && req.query.debug) {
+      try {
+        const info = await head(BLOB_PATH);
+        const url = `${info.url}?v=${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const r = await fetch(url, { cache: "no-store" });
+        const text = await r.text();
+        res.status(200).json({ info, fetchStatus: r.status, fetchOk: r.ok, text });
+      } catch (err) {
+        res.status(200).json({ debugError: String((err && err.stack) || err) });
+      }
+      return;
+    }
     const rows = await readAll();
     res.status(200).json(rows);
     return;
