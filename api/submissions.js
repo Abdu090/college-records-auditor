@@ -12,29 +12,34 @@ const PUT_OPTS = {
   cacheControlMaxAge: 0
 };
 
+// Returns the current list of submissions. Only treats "the blob doesn't
+// exist yet" (first ever write) as an empty list -- any other failure
+// (network blip, propagation hiccup, bad JSON) is rethrown so callers abort
+// instead of overwriting real data with an accidentally-empty read.
 async function readAll() {
+  let info;
   try {
-    const info = await head(BLOB_PATH);
-    // Plain public blob URLs sit behind a CDN that can pin stale content
-    // indefinitely. Reading with the read/write token as a Bearer auth
-    // header makes this an authenticated request, which shared caches
-    // must not store, so it always reaches the current content.
-    const r = await fetch(info.url, {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` }
-    });
-    if (!r.ok) return [];
-    const rows = await r.json();
-    return Array.isArray(rows) ? rows : [];
-  } catch {
-    return [];
+    info = await head(BLOB_PATH);
+  } catch (err) {
+    if (/does not exist/i.test(String((err && err.message) || err))) return [];
+    throw err;
   }
+  const r = await fetch(info.url, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` }
+  });
+  if (!r.ok) throw new Error("Could not read current data (HTTP " + r.status + ")");
+  const rows = await r.json();
+  return Array.isArray(rows) ? rows : [];
 }
 
 module.exports = async function handler(req, res) {
   if (req.method === "GET") {
-    const rows = await readAll();
-    res.status(200).json(rows);
+    try {
+      res.status(200).json(await readAll());
+    } catch (err) {
+      res.status(500).json({ error: String((err && err.message) || err) });
+    }
     return;
   }
   if (req.method === "POST") {
@@ -48,11 +53,11 @@ module.exports = async function handler(req, res) {
       res.status(400).json({ error: "Missing id/data" });
       return;
     }
-    const rows = await readAll();
-    const idx = rows.findIndex(r => r.id === id);
-    const rec = Object.assign({ id }, data);
-    if (idx >= 0) rows[idx] = rec; else rows.push(rec);
     try {
+      const rows = await readAll();
+      const idx = rows.findIndex(r => r.id === id);
+      const rec = Object.assign({ id }, data);
+      if (idx >= 0) rows[idx] = rec; else rows.push(rec);
       await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
       res.status(200).json({ ok: true });
     } catch (err) {
@@ -70,16 +75,11 @@ module.exports = async function handler(req, res) {
       res.status(400).json({ error: "Missing id" });
       return;
     }
-    const before = await readAll();
-    console.log("[DELETE] id to remove:", JSON.stringify(id), "before:", JSON.stringify(before));
-    const rows = before.filter(r => r.id !== id);
-    console.log("[DELETE] after filter:", JSON.stringify(rows));
     try {
-      const putResult = await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
-      console.log("[DELETE] put() result:", JSON.stringify(putResult));
+      const rows = (await readAll()).filter(r => r.id !== id);
+      await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
       res.status(200).json({ ok: true });
     } catch (err) {
-      console.log("[DELETE] put() error:", String((err && err.stack) || err));
       res.status(500).json({ error: String((err && err.message) || err) });
     }
     return;
