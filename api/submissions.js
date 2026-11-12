@@ -7,7 +7,11 @@ const BLOB_PATH = "submissions.json";
 async function readAll() {
   try {
     const info = await head(BLOB_PATH);
-    const r = await fetch(info.url, { cache: "no-store" });
+    // The blob's public URL sits behind a CDN that ignores our cache
+    // headers, so bust it with a query string tied to the blob's own
+    // last-modified time (changes on every write).
+    const bust = info.uploadedAt ? new Date(info.uploadedAt).getTime() : Date.now();
+    const r = await fetch(`${info.url}?v=${bust}`, { cache: "no-store" });
     if (!r.ok) return [];
     const rows = await r.json();
     return Array.isArray(rows) ? rows : [];
