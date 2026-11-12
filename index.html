@@ -396,6 +396,29 @@ let lang = "ar";
 try{ const s = localStorage.getItem("cra-lang"); if(s==="en"||s==="ar") lang = s; }catch(e){}
 const t = k => STR[lang][k];
 let caps = { db:null, sample:null, downloads:null };
+
+/* Fallback transport when not running inside Claude: the public Vercel
+   deployment serves /api/ai-check and /api/submissions (see api/ folder). */
+async function aiAsk(prompt){
+  if(caps.sample) return caps.sample.json(prompt, { modelTier:"quick" });
+  const r = await fetch("/api/ai-check", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ prompt }) });
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data.error || ("HTTP "+r.status));
+  return data;
+}
+async function officeList(){
+  if(caps.db) return (await caps.db.collection("submissions").get()).docs.map(d=>d.data()).filter(Boolean);
+  const r = await fetch("/api/submissions");
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return await r.json();
+}
+async function officeSubmit(id, data){
+  if(caps.db) return caps.db.collection("submissions").doc(id).set(data);
+  const r = await fetch("/api/submissions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, data }) });
+  const out = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(out.error || ("HTTP "+r.status));
+}
+
 let pending = null;          // { files, dirs, source }
 let report = null;           // { college, units, general, demo, at }
 let filt = { batch:"*", sem:"*", track:"*", q:"" };
@@ -582,9 +605,7 @@ function renderChrome(){
   $("tab-scan").textContent = t("tabScan");
   $("tab-history").textContent = t("tabHistory");
   $("tab-office").textContent = t("tabOffice");
-  $("tab-office").hidden = !caps.db;
-  if(!caps.db && activeTab==="office") showTab("scan");
-  $("t-foot").textContent = (caps.db||caps.sample) ? t("foot") : t("footSolo");
+  $("t-foot").textContent = t("foot");
   document.title = lang==="ar" ? "مدقق سجلات الكليات" : "Faculty Records Auditor";
 }
 
@@ -734,10 +755,9 @@ function renderBody(){
   if(!units.length) h += `<tr><td colspan="4"><div class="empty-state">${esc(t("shown")(0, report.units.length))}</div></td></tr>`;
   h += `</tbody></table></div></div></section>`;
 
-  const sendAvail = !!caps.db;
-  h += `<section class="block"><div class="block-h"><h2>${esc(t("exportH"))}</h2></div><p class="desc">${esc(sendAvail?t("exportD"):t("exportDSolo"))}</p><div class="card export-bar">
+  h += `<section class="block"><div class="block-h"><h2>${esc(t("exportH"))}</h2></div><p class="desc">${esc(t("exportD"))}</p><div class="card export-bar">
     <button class="btn-2 accent" id="xl" type="button">${esc(t("exportBtn"))}</button>
-    ${sendAvail?`<button class="btn" id="send" type="button">${esc(t("sendBtn"))}</button>`:""}</div><div id="export-status" aria-live="polite"></div></section>`;
+    <button class="btn" id="send" type="button">${esc(t("sendBtn"))}</button></div><div id="export-status" aria-live="polite"></div></section>`;
 
   $("res-body").innerHTML = h;
   $("toggle-all").addEventListener("click", ()=>{ allOpen=!allOpen; if(!allOpen) openRows.clear(); renderBody(); });
@@ -764,7 +784,7 @@ function aiOutHtml(k){
 function detailHtml(u){
   const aiTargets = IDS.reduce((n,i)=>n+u.items[i].files.filter(canAi).length,0);
   let h = `<div class="detail-tools"><bdi class="muted">${esc(u.path)}</bdi>`;
-  if(aiTargets && caps.sample) h += `<button class="btn-2 ai-all" type="button" data-dir="${esc(u.dir)}">${esc(t("aiAll"))} (${aiTargets})</button><span class="muted" id="prog-${esc(slug(u.dir))}"></span>`;
+  if(aiTargets) h += `<button class="btn-2 ai-all" type="button" data-dir="${esc(u.dir)}">${esc(t("aiAll"))} (${aiTargets})</button><span class="muted" id="prog-${esc(slug(u.dir))}"></span>`;
   else if(report.demo) h += `<span class="muted">${esc(t("aiDemo"))}</span>`;
   h += `</div><div class="tbl-wrap"><table class="chk"><tbody>`;
   IDS.forEach(i=>{
@@ -773,7 +793,7 @@ function detailHtml(u){
     it.files.forEach(f=>{
       const k = fileKey(u,i,f);
       h += `<div class="file"><bdi class="fn">${esc(f.name)}</bdi><bdi class="muted">${esc(fmtBytes(f.size))}</bdi>${f.empty?`<span class="tag">${esc(t("lgEmpty"))}</span>`:""}${f.sharedFrom?`<span class="tag" title="${esc(t("sharedNote"))}">${esc(f.sharedFrom.split("/").pop())}</span>`:""}`;
-      if(canAi(f) && caps.sample) h += `<button class="ai-btn" type="button" data-k="${esc(k)}" ${(aiResults[k]&&aiResults[k].state==="run")?"disabled":""}>${esc(t("aiOne"))}</button>`;
+      if(canAi(f)) h += `<button class="ai-btn" type="button" data-k="${esc(k)}" ${(aiResults[k]&&aiResults[k].state==="run")?"disabled":""}>${esc(t("aiOne"))}</button>`;
       h += `</div>${aiOutHtml(k)}`;
     });
     if(it.status!=="available"){
@@ -821,18 +841,18 @@ async function textOf(f){
   return { text:(a.length>=c.length?a:c).replace(/\s+/g," ").trim().slice(0,3500), doc:true };
 }
 async function aiOne(k){
-  const hit = findFile(k); if(!hit || !caps.sample) return;
+  const hit = findFile(k); if(!hit) return;
   aiResults[k] = {state:"run"}; renderBody();
   try{
     const { text, doc } = await textOf(hit.f);
     if(!text || text.length<20) throw new Error(t("aiNoText"));
-    const v = await caps.sample.json(`A university course-records checklist (British Accreditation Council) requires a document called "${itemName(hit.i)}". The file "${hit.f.name}" was submitted for it. Text extracted from the file follows (it may be partial or garbled):\n"""${text}"""\nDoes the content really look like a "${itemName(hit.i)}" that has been filled in (not a blank template)? Reply with ONLY JSON: {"matches": true|false, "confidence": "high"|"medium"|"low", "reason": "one short sentence in ${lang==="ar"?"Arabic":"English"}"}`, { modelTier:"quick" });
+    const v = await aiAsk(`A university course-records checklist (British Accreditation Council) requires a document called "${itemName(hit.i)}". The file "${hit.f.name}" was submitted for it. Text extracted from the file follows (it may be partial or garbled):\n"""${text}"""\nDoes the content really look like a "${itemName(hit.i)}" that has been filled in (not a blank template)? Reply with ONLY JSON: {"matches": true|false, "confidence": "high"|"medium"|"low", "reason": "one short sentence in ${lang==="ar"?"Arabic":"English"}"}`);
     aiResults[k] = { state: v && v.matches ? "yes" : "no", conf: v && v.confidence, text: v && v.reason, doc };
   }catch(err){ aiResults[k] = { state:"err", text: (err && (err.message||err.code)) || String(err) }; }
   renderBody();
 }
 async function aiAll(dir){
-  const u = report.units.find(x=>x.dir===dir); if(!u || !caps.sample) return;
+  const u = report.units.find(x=>x.dir===dir); if(!u) return;
   const keys = []; IDS.forEach(i=>u.items[i].files.filter(canAi).forEach(f=>keys.push(fileKey(u,i,f))));
   let done = 0;
   for(const k of keys){
@@ -883,11 +903,10 @@ async function exportExcel(){
 async function sendOffice(){
   const el = $("export-status");
   if(report.demo){ el.innerHTML = `<div class="status error">${esc(t("sendDemo"))}</div>`; return; }
-  if(!caps.db){ el.innerHTML = `<div class="status error">${esc(t("sendOff"))}</div>`; return; }
   el.innerHTML = `<div class="status info"><span class="spin"></span>${esc(t("sending"))}</div>`;
   try{
     const s = statsOf(report.units);
-    await caps.db.collection("submissions").doc(slug(report.college)).set({
+    await officeSubmit(slug(report.college), {
       collegeName: report.college, submittedAt: report.at, totalUnits: s.n, avgPct: Number(s.avg.toFixed(1)),
       itemCount: Object.fromEntries(IDS.map(i=>[i, s.per[i].a])), emptyCount: Object.fromEntries(IDS.map(i=>[i, s.per[i].e])),
       units: report.units.map(u=>({ name:u.course, path:u.path, batch:u.batch||"", sem:u.sem||"", track:u.track||"", nAvail:u.nA, nEmpty:u.nE, pct:u.pct,
@@ -956,10 +975,9 @@ let officeLoaded = false;
 function bucketColor(p){ return p>=60?["var(--good)","var(--good-wash)"]:p>=25?["var(--empty)","var(--empty-wash)"]:["var(--bad)","var(--bad-wash)"]; }
 async function renderOffice(){
   const p = $("panel-office");
-  if(!caps.db){ p.innerHTML = `<div class="card empty-state"><b>${esc(t("offH"))}</b>${esc(t("offOff"))}</div>`; return; }
   p.innerHTML = `<div class="card empty-state"><span class="spin"></span>${esc(t("offLoading"))}</div>`;
   let cols = [];
-  try{ cols = (await caps.db.collection("submissions").get()).docs.map(d=>d.data()).filter(Boolean); }
+  try{ cols = (await officeList()).filter(Boolean); }
   catch(err){ p.innerHTML = `<div class="card status error">${esc((err&&(err.message||err.code))||err)}</div>`; return; }
   if(!cols.length){ p.innerHTML = `<div class="card empty-state"><b>${esc(t("offEmpty"))}</b>${esc(t("offEmptySub"))}</div>`; return; }
   cols.sort((a,b)=>(b.avgPct||0)-(a.avgPct||0));
