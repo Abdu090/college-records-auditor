@@ -41,6 +41,7 @@ module.exports = async function handler(req, res) {
       await put(BLOB_PATH, JSON.stringify(rows), {
         access: "public",
         contentType: "application/json",
+        addRandomSuffix: false,
         allowOverwrite: true
       });
       res.status(200).json({ ok: true });
