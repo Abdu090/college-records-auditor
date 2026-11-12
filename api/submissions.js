@@ -4,25 +4,6 @@ const { put, head } = require("@vercel/blob");
 
 const BLOB_PATH = "submissions-v2.json";
 
-async function readAll() {
-  try {
-    const info = await head(BLOB_PATH);
-    console.log("[readAll] head()", JSON.stringify(info));
-    const r = await fetch(info.url, {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` }
-    });
-    const text = await r.text();
-    console.log("[readAll] fetch status", r.status, "body", text);
-    if (!r.ok) return [];
-    const rows = JSON.parse(text);
-    return Array.isArray(rows) ? rows : [];
-  } catch (err) {
-    console.log("[readAll] error", String((err && err.stack) || err));
-    return [];
-  }
-}
-
 const PUT_OPTS = {
   access: "public",
   contentType: "application/json",
@@ -30,6 +11,25 @@ const PUT_OPTS = {
   allowOverwrite: true,
   cacheControlMaxAge: 0
 };
+
+async function readAll() {
+  try {
+    const info = await head(BLOB_PATH);
+    // Plain public blob URLs sit behind a CDN that can pin stale content
+    // indefinitely. Reading with the read/write token as a Bearer auth
+    // header makes this an authenticated request, which shared caches
+    // must not store, so it always reaches the current content.
+    const r = await fetch(info.url, {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` }
+    });
+    if (!r.ok) return [];
+    const rows = await r.json();
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
 
 module.exports = async function handler(req, res) {
   if (req.method === "GET") {
@@ -52,13 +52,10 @@ module.exports = async function handler(req, res) {
     const idx = rows.findIndex(r => r.id === id);
     const rec = Object.assign({ id }, data);
     if (idx >= 0) rows[idx] = rec; else rows.push(rec);
-    console.log("[POST] writing rows", JSON.stringify(rows));
     try {
-      const putResult = await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
-      console.log("[POST] put() result", JSON.stringify(putResult));
+      await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
       res.status(200).json({ ok: true });
     } catch (err) {
-      console.log("[POST] put() error", String((err && err.stack) || err));
       res.status(500).json({ error: String((err && err.message) || err) });
     }
     return;
