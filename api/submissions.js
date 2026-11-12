@@ -2,7 +2,7 @@
 // Keeps one JSON blob of per-faculty submissions in Vercel Blob storage.
 const { put, head } = require("@vercel/blob");
 
-const BLOB_PATH = "submissions.json";
+const BLOB_PATH = "submissions-v2.json";
 
 async function readAll() {
   try {
