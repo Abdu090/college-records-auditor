@@ -7,10 +7,10 @@ const BLOB_PATH = "submissions.json";
 async function readAll() {
   try {
     const info = await head(BLOB_PATH);
-    // The blob's public URL sits behind a CDN, and head()'s own metadata
-    // (uploadedAt) can briefly lag right after a write, so don't rely on
-    // it for cache-busting -- always force a unique query string instead.
-    const r = await fetch(`${info.url}?v=${Date.now()}-${Math.random().toString(36).slice(2)}`, { cache: "no-store" });
+    // Vercel Blob's CDN caches the public URL by pathname and ignores query
+    // strings, so a classic cache-busting query param does nothing here.
+    // put() below sets cacheControlMaxAge:0 so the CDN doesn't cache writes.
+    const r = await fetch(info.url, { cache: "no-store" });
     if (!r.ok) return [];
     const rows = await r.json();
     return Array.isArray(rows) ? rows : [];
@@ -19,13 +19,20 @@ async function readAll() {
   }
 }
 
+const PUT_OPTS = {
+  access: "public",
+  contentType: "application/json",
+  addRandomSuffix: false,
+  allowOverwrite: true,
+  cacheControlMaxAge: 0
+};
+
 module.exports = async function handler(req, res) {
   if (req.method === "GET") {
     if (req.query && req.query.debug) {
       try {
         const info = await head(BLOB_PATH);
-        const url = `${info.url}?v=${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const r = await fetch(url, { cache: "no-store" });
+        const r = await fetch(info.url, { cache: "no-store" });
         const text = await r.text();
         res.status(200).json({ info, fetchStatus: r.status, fetchOk: r.ok, text });
       } catch (err) {
@@ -53,12 +60,7 @@ module.exports = async function handler(req, res) {
     const rec = Object.assign({ id }, data);
     if (idx >= 0) rows[idx] = rec; else rows.push(rec);
     try {
-      await put(BLOB_PATH, JSON.stringify(rows), {
-        access: "public",
-        contentType: "application/json",
-        addRandomSuffix: false,
-        allowOverwrite: true
-      });
+      await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
       res.status(200).json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: String((err && err.message) || err) });
@@ -77,12 +79,7 @@ module.exports = async function handler(req, res) {
     }
     const rows = (await readAll()).filter(r => r.id !== id);
     try {
-      await put(BLOB_PATH, JSON.stringify(rows), {
-        access: "public",
-        contentType: "application/json",
-        addRandomSuffix: false,
-        allowOverwrite: true
-      });
+      await put(BLOB_PATH, JSON.stringify(rows), PUT_OPTS);
       res.status(200).json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: String((err && err.message) || err) });
